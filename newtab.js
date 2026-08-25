@@ -36,7 +36,11 @@ document.addEventListener("DOMContentLoaded", () => {
     e.stopPropagation();
     engineMenu.classList.toggle("show");
   });
-  document.addEventListener("click", () => engineMenu.classList.remove("show"));
+  document.addEventListener("click", (e) => {
+    if (!engineSelector.contains(e.target) && !engineMenu.contains(e.target)) {
+      engineMenu.classList.remove("show");
+    }
+  });
 
   function updateEngineSettings(option) {
     if (!option) return;
@@ -96,8 +100,9 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const micBtn = document.getElementById("mic-btn");
-  if ("webkitSpeechRecognition" in window) {
-    const recognition = new webkitSpeechRecognition();
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition) {
+    const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
 
@@ -134,24 +139,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const qrContainer = document.getElementById("qrcode");
   const qrPlaceholder = document.getElementById("qr-placeholder");
 
-  qrOpenBtn.addEventListener("click", () => {
-    qrModal.classList.add("show");
-    qrInput.value = "";
-    qrContainer.classList.remove("active");
-    qrContainer.innerHTML = "";
-    qrPlaceholder.style.setProperty("display", "flex", "important");
-    qrInput.focus();
-  });
+  let qrInstance = null;
+  let qrDebounceTimer = null;
 
-  qrInput.addEventListener("input", () => {
-    const text = qrInput.value.trim();
-    if (text) {
-      qrPlaceholder.style.setProperty("display", "none", "important");
-      qrContainer.classList.add("active");
+  function debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  const renderQR = debounce((text) => {
+    if (!text) {
+      qrContainer.classList.remove("active");
       qrContainer.innerHTML = "";
-      if (typeof QRCode !== "undefined") {
-        new QRCode(qrContainer, {
-          text: text,
+      qrPlaceholder.style.setProperty("display", "flex", "important");
+      return;
+    }
+    qrPlaceholder.style.setProperty("display", "none", "important");
+    qrContainer.classList.add("active");
+    qrContainer.innerHTML = "";
+    if (typeof QRCode !== "undefined") {
+      if (!qrInstance) {
+        qrInstance = new QRCode(qrContainer, {
           width: 150,
           height: 150,
           colorDark: "#000000",
@@ -159,11 +167,20 @@ document.addEventListener("DOMContentLoaded", () => {
           correctLevel: QRCode.CorrectLevel.H,
         });
       }
-    } else {
-      qrContainer.classList.remove("active");
-      qrContainer.innerHTML = "";
-      qrPlaceholder.style.setProperty("display", "flex", "important");
+      qrInstance.makeCode(text);
     }
+  }, 150);
+
+  qrOpenBtn.addEventListener("click", () => {
+    qrModal.classList.add("show");
+    qrInput.value = "";
+    renderQR("");
+    qrInput.focus();
+  });
+
+  qrInput.addEventListener("input", () => {
+    const text = qrInput.value.trim();
+    renderQR(text);
   });
 
   qrCloseBtn.addEventListener("click", () => qrModal.classList.remove("show"));
@@ -182,6 +199,10 @@ document.addEventListener("DOMContentLoaded", () => {
     { name: "Netflix", url: "https://www.netflix.com" },
   ];
 
+  function genId() {
+    try { return crypto.randomUUID(); } catch { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+  }
+
   let quickLinks;
   try {
     quickLinks = JSON.parse(localStorage.getItem("myQuickLinks")) || [
@@ -191,7 +212,7 @@ document.addEventListener("DOMContentLoaded", () => {
     quickLinks = [...defaultLinks];
   }
 
-  quickLinks = quickLinks.map((l, i) => ({ ...l, id: l.id ?? crypto.randomUUID() }));
+  quickLinks = quickLinks.map(l => ({ ...l, id: l.id ?? genId() }));
   if (quickLinks.some(l => l.id === undefined)) {
     localStorage.setItem("myQuickLinks", JSON.stringify(quickLinks));
   }
@@ -230,10 +251,18 @@ document.addEventListener("DOMContentLoaded", () => {
       <button class="edit-btn" data-id="${link.id}">${editIconSVG}</button>
       <button class="delete-btn" data-id="${link.id}">${deleteIconSVG}</button>
       <div class="quick-link">
-        <div class="link-icon"><img src="${faviconUrl}" alt="${link.name}" loading="lazy" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22%23888%22 d=%22M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z%22/%3E%3C/svg%3E'"></div>
-        <span>${link.name}</span>
+        <div class="link-icon"><img src="${faviconUrl}" loading="lazy"></div>
+        <span></span>
       </div>
     `;
+
+    const img = linkEl.querySelector(".link-icon img");
+    img.alt = link.name;
+    img.addEventListener("error", () => {
+      img.src = "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Cpath fill=%22%23888%22 d=%22M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z%22/%3E%3C/svg%3E";
+    });
+    const span = linkEl.querySelector(".quick-link span");
+    span.textContent = link.name;
 
     const editBtn = linkEl.querySelector(".edit-btn");
     editBtn.addEventListener("click", (e) => {
@@ -255,8 +284,9 @@ document.addEventListener("DOMContentLoaded", () => {
         !e.target.closest(".delete-btn") &&
         !e.target.closest(".edit-btn")
       ) {
-        if (/^https?:\/\//i.test(link.url)) {
-          window.location.href = link.url;
+        const url = link.url;
+        if (/^https?:\/\//i.test(url)) {
+          window.location.href = url;
         }
       }
     });
@@ -442,10 +472,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const editIndex = modal.getAttribute("data-edit-index");
       if (editIndex !== null) {
-        quickLinks[parseInt(editIndex)] = { name: newName, url: newUrl };
+        const idx = parseInt(editIndex);
+        quickLinks[idx] = { ...quickLinks[idx], name: newName, url: newUrl };
         modal.removeAttribute("data-edit-index");
       } else {
-        quickLinks.push({ name: newName, url: newUrl });
+        quickLinks.push({ name: newName, url: newUrl, id: genId() });
       }
       saveAndRender();
       closeModal();
@@ -458,8 +489,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
   renderLinks();
 
+  function isEditing() {
+    const el = document.activeElement;
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+  }
+
   document.addEventListener("keydown", (e) => {
-    if (document.activeElement.tagName === "INPUT") return;
+    if (isEditing()) return;
     if (e.key === "/") {
       e.preventDefault();
       searchInput.focus();
@@ -467,8 +505,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const keyNum = parseInt(e.key);
     if (keyNum >= 1 && keyNum <= 7) {
       const linkIndex = keyNum - 1;
-      if (quickLinks[linkIndex]) {
-        window.location.href = quickLinks[linkIndex].url;
+      const link = quickLinks[linkIndex];
+      if (link && /^https?:\/\//i.test(link.url)) {
+        window.location.href = link.url;
       }
     }
   });
@@ -548,56 +587,40 @@ document.addEventListener("DOMContentLoaded", () => {
     searchForm.target = val;
   });
 
-  function handleToggle(id, element, storageKey) {
-    const cb = document.getElementById(id);
-    if (!cb || !element) return;
+  function registerToggle(checkboxId, storageKey, apply) {
+    const cb = document.getElementById(checkboxId);
+    if (!cb) return;
     const isHidden = localStorage.getItem(storageKey) === "true";
     cb.checked = !isHidden;
-    element.style.display = isHidden ? "none" : "flex";
+    if (apply) apply(!isHidden);
     cb.addEventListener("change", (e) => {
       const hide = !e.target.checked;
       localStorage.setItem(storageKey, hide);
-      element.style.display = hide ? "none" : "flex";
+      if (apply) apply(!hide);
     });
   }
 
-  handleToggle("setting-show-theme-btn", themeToggle, "hideThemeBtn");
-  handleToggle("setting-show-qr-btn", qrOpenBtn, "hideQrBtn");
+  registerToggle("setting-show-theme-btn", "hideThemeBtn", (shown) => {
+    themeToggle.style.display = shown ? "flex" : "none";
+  });
+  registerToggle("setting-show-qr-btn", "hideQrBtn", (shown) => {
+    qrOpenBtn.style.display = shown ? "flex" : "none";
+  });
 
   const showLinksToggle = document.getElementById("setting-show-links");
-  const isLinksHidden = localStorage.getItem("hideQuickLinks") === "true";
-  if (showLinksToggle) {
-    showLinksToggle.checked = !isLinksHidden;
-    linksContainer.style.display = isLinksHidden ? "none" : "flex";
-    showLinksToggle.addEventListener("change", (e) => {
-      const hide = !e.target.checked;
-      localStorage.setItem("hideQuickLinks", hide);
-      linksContainer.style.display = hide ? "none" : "flex";
-    });
-  }
+  registerToggle("setting-show-links", "hideQuickLinks", (shown) => {
+    linksContainer.style.display = shown ? "flex" : "none";
+  });
 
-  function setupActionToggle(toggleId, storageKey) {
-    const toggle = document.getElementById(toggleId);
-    if (!toggle) return;
+  registerToggle("setting-show-edit", "hideEditBtn", () => applyActionButtonsVisibility());
+  registerToggle("setting-show-delete", "hideDeleteBtn", () => applyActionButtonsVisibility());
 
-    const isHidden = localStorage.getItem(storageKey) === "true";
-    toggle.checked = !isHidden;
-
-    toggle.addEventListener("change", (e) => {
-      const hide = !e.target.checked;
-      localStorage.setItem(storageKey, hide);
-      applyActionButtonsVisibility();
-    });
-  }
-
-  setupActionToggle("setting-show-edit", "hideEditBtn");
-  setupActionToggle("setting-show-delete", "hideDeleteBtn");
 
   const btnRestoreLinks = document.getElementById("btn-restore-links");
   if (btnRestoreLinks) {
     btnRestoreLinks.addEventListener("click", () => {
       if (confirm("Reset Quick Links to default?")) {
-        quickLinks = [...defaultLinks];
+        quickLinks = defaultLinks.map(l => ({ ...l, id: genId() }));
         saveAndRender();
       }
     });
@@ -607,8 +630,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnExport) {
     btnExport.addEventListener("click", () => {
       const data = {
-        quickLinks:
-          JSON.parse(localStorage.getItem("myQuickLinks")) || defaultLinks,
+        quickLinks,
         theme: localStorage.getItem("theme"),
         searchEngine: localStorage.getItem("searchEngine"),
         searchTarget: localStorage.getItem("searchTarget"),
@@ -637,11 +659,10 @@ document.addEventListener("DOMContentLoaded", () => {
       reader.onload = (event) => {
         try {
           const data = JSON.parse(event.target.result);
-          if (data.quickLinks)
-            localStorage.setItem(
-              "myQuickLinks",
-              JSON.stringify(data.quickLinks),
-            );
+          if (data.quickLinks) {
+            const migrated = data.quickLinks.map(l => ({ ...l, id: l.id ?? genId() }));
+            localStorage.setItem("myQuickLinks", JSON.stringify(migrated));
+          }
           if (data.theme) localStorage.setItem("theme", data.theme);
           if (data.searchEngine)
             localStorage.setItem("searchEngine", data.searchEngine);
