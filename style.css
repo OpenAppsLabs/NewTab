@@ -904,4 +904,5 @@ input:checked + .slider:before {
 .engine-option img,
 #engine-icon {
     border-radius: 50%;
+    object-fit: contain;
 }
