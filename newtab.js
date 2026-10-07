@@ -2,13 +2,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const body = document.body;
   const themeToggle = document.getElementById("theme-toggle");
   const savedTheme = localStorage.getItem("theme");
+  const darkMq =
+    window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
 
   if (savedTheme) {
     if (savedTheme !== "system") body.setAttribute("data-theme", savedTheme);
-  } else if (
-    window.matchMedia &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches
-  ) {
+  } else if (darkMq && darkMq.matches) {
     body.setAttribute("data-theme", "dark");
   }
 
@@ -46,12 +45,16 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   const savedEngine = localStorage.getItem("searchEngine") || "google";
-  let activeOption = document.querySelector(
-    `.engine-option[data-value="${savedEngine}"]`,
+  const engineOptions = Array.from(
+    document.querySelectorAll(".engine-option"),
   );
+  const engineOptionByValue = new Map(
+    engineOptions.map((o) => [o.getAttribute("data-value"), o]),
+  );
+  const activeOption = engineOptionByValue.get(savedEngine);
   if (activeOption) updateEngineSettings(activeOption);
 
-  document.querySelectorAll(".engine-option").forEach((option) => {
+  engineOptions.forEach((option) => {
     option.addEventListener("click", () => {
       const val = option.getAttribute("data-value");
       localStorage.setItem("searchEngine", val);
@@ -143,32 +146,42 @@ document.addEventListener("DOMContentLoaded", () => {
     qrInput.focus();
   });
 
+  let qrTimer;
   qrInput.addEventListener("input", () => {
-    const text = qrInput.value.trim();
-    if (text) {
-      qrPlaceholder.style.setProperty("display", "none", "important");
-      qrContainer.classList.add("active");
-      qrContainer.innerHTML = "";
-      if (typeof QRCode !== "undefined") {
-        new QRCode(qrContainer, {
-          text: text,
-          width: 150,
-          height: 150,
-          colorDark: "#000000",
-          colorLight: "#ffffff",
-          correctLevel: QRCode.CorrectLevel.H,
-        });
+    clearTimeout(qrTimer);
+    qrTimer = setTimeout(() => {
+      const text = qrInput.value.trim();
+      if (text) {
+        qrPlaceholder.style.setProperty("display", "none", "important");
+        qrContainer.classList.add("active");
+        qrContainer.innerHTML = "";
+        if (typeof QRCode !== "undefined") {
+          new QRCode(qrContainer, {
+            text: text,
+            width: 150,
+            height: 150,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.H,
+          });
+        }
+      } else {
+        qrContainer.classList.remove("active");
+        qrContainer.innerHTML = "";
+        qrPlaceholder.style.setProperty("display", "flex", "important");
       }
-    } else {
-      qrContainer.classList.remove("active");
-      qrContainer.innerHTML = "";
-      qrPlaceholder.style.setProperty("display", "flex", "important");
-    }
+    }, 250);
   });
 
-  qrCloseBtn.addEventListener("click", () => qrModal.classList.remove("show"));
+  qrCloseBtn.addEventListener("click", () => {
+    clearTimeout(qrTimer);
+    qrModal.classList.remove("show");
+  });
   qrModal.addEventListener("click", (e) => {
-    if (e.target === qrModal) qrModal.classList.remove("show");
+    if (e.target === qrModal) {
+      clearTimeout(qrTimer);
+      qrModal.classList.remove("show");
+    }
   });
 
   const linksContainer = document.getElementById("quick-links-container");
@@ -208,82 +221,119 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  function buildLinkHtml(link, index) {
+    const urlObj = new URL(
+      link.url.startsWith("http") ? link.url : "https://" + link.url,
+    );
+    const faviconUrl = `https://www.google.com/s2/favicons?domain=${urlObj.hostname}&sz=64`;
+    return `
+      <button class="edit-btn" data-index="${index}">${editIconSVG}</button>
+      <button class="delete-btn" data-index="${index}">${deleteIconSVG}</button>
+      <div class="quick-link">
+        <div class="link-icon"><img src="${faviconUrl}" alt="${link.name}"></div>
+        <span>${link.name}</span>
+      </div>
+    `;
+  }
+
+  function bindLinkHandlers(linkEl, link, index) {
+    linkEl.__nt_data = { name: link.name, url: link.url };
+
+    linkEl.querySelector(".edit-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = Number(e.currentTarget.getAttribute("data-index"));
+      const item = quickLinks[idx];
+      nameInput.value = item.name;
+      urlInput.value = item.url;
+      modal.querySelector("h3").innerText = "Edit Quick Link";
+      document.getElementById("save-link-btn").innerText = "Update";
+      modal.setAttribute("data-edit-index", idx);
+      modal.classList.add("show");
+      nameInput.focus();
+    });
+
+    linkEl.querySelector(".delete-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = Number(e.currentTarget.getAttribute("data-index"));
+      const deletedLink = quickLinks.splice(idx, 1)[0];
+      saveAndRender();
+      showUndoToast(deletedLink, idx);
+    });
+
+    linkEl.addEventListener("click", (e) => {
+      if (
+        !e.target.closest(".delete-btn") &&
+        !e.target.closest(".edit-btn")
+      ) {
+        window.location.href = link.url;
+      }
+    });
+
+    linkEl.addEventListener("dragstart", () => {
+      draggedItemIndex = index;
+      requestAnimationFrame(() => linkEl.classList.add("dragging"));
+    });
+    linkEl.addEventListener("dragend", () => {
+      linkEl.classList.remove("dragging");
+      draggedItemIndex = null;
+      document
+        .querySelectorAll(".quick-link-wrapper")
+        .forEach((el) => el.classList.remove("drag-over"));
+    });
+    linkEl.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      if (draggedItemIndex !== null && draggedItemIndex !== index) {
+        linkEl.classList.add("drag-over");
+      }
+    });
+    linkEl.addEventListener("dragleave", () =>
+      linkEl.classList.remove("drag-over"),
+    );
+    linkEl.addEventListener("drop", (e) => {
+      e.preventDefault();
+      linkEl.classList.remove("drag-over");
+      if (draggedItemIndex !== null && draggedItemIndex !== index) {
+        const draggedItem = quickLinks.splice(draggedItemIndex, 1)[0];
+        quickLinks.splice(index, 0, draggedItem);
+        saveAndRender();
+      }
+    });
+  }
+
   function renderLinks() {
-    linksContainer.innerHTML = "";
+    const addBtn = linksContainer.querySelector(".quick-link-wrapper.add-btn");
+    if (addBtn) addBtn.remove();
+
+    const wrappers = Array.from(linksContainer.children);
 
     quickLinks.forEach((link, index) => {
-      const urlObj = new URL(
-        link.url.startsWith("http") ? link.url : "https://" + link.url,
-      );
-      const faviconUrl = `https://www.google.com/s2/favicons?domain=${urlObj.hostname}&sz=64`;
+      const el = wrappers[index];
+      if (
+        el &&
+        el.__nt_data &&
+        el.__nt_data.name === link.name &&
+        el.__nt_data.url === link.url
+      ) {
+        return;
+      }
 
       const linkEl = document.createElement("div");
       linkEl.className = "quick-link-wrapper";
       linkEl.setAttribute("draggable", "true");
+      linkEl.innerHTML = buildLinkHtml(link, index);
+      bindLinkHandlers(linkEl, link, index);
 
-      linkEl.innerHTML = `
-        <button class="edit-btn" data-index="${index}">${editIconSVG}</button>
-        <button class="delete-btn" data-index="${index}">${deleteIconSVG}</button>
-        <div class="quick-link">
-          <div class="link-icon"><img src="${faviconUrl}" alt="${link.name}"></div>
-          <span>${link.name}</span>
-        </div>
-      `;
-
-      linkEl.querySelector(".edit-btn").addEventListener("click", (e) => {
-        e.stopPropagation();
-        const idx = parseInt(e.currentTarget.getAttribute("data-index"));
-        const item = quickLinks[idx];
-        nameInput.value = item.name;
-        urlInput.value = item.url;
-        modal.querySelector("h3").innerText = "Edit Quick Link";
-        document.getElementById("save-link-btn").innerText = "Update";
-        modal.setAttribute("data-edit-index", idx);
-        modal.classList.add("show");
-        nameInput.focus();
-      });
-
-      linkEl.addEventListener("click", (e) => {
-        if (
-          !e.target.closest(".delete-btn") &&
-          !e.target.closest(".edit-btn")
-        ) {
-          window.location.href = link.url;
-        }
-      });
-
-      linkEl.addEventListener("dragstart", () => {
-        draggedItemIndex = index;
-        setTimeout(() => linkEl.classList.add("dragging"), 0);
-      });
-      linkEl.addEventListener("dragend", () => {
-        linkEl.classList.remove("dragging");
-        draggedItemIndex = null;
-        document
-          .querySelectorAll(".quick-link-wrapper")
-          .forEach((el) => el.classList.remove("drag-over"));
-      });
-      linkEl.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        if (draggedItemIndex !== null && draggedItemIndex !== index) {
-          linkEl.classList.add("drag-over");
-        }
-      });
-      linkEl.addEventListener("dragleave", () =>
-        linkEl.classList.remove("drag-over"),
-      );
-      linkEl.addEventListener("drop", (e) => {
-        e.preventDefault();
-        linkEl.classList.remove("drag-over");
-        if (draggedItemIndex !== null && draggedItemIndex !== index) {
-          const draggedItem = quickLinks.splice(draggedItemIndex, 1)[0];
-          quickLinks.splice(index, 0, draggedItem);
-          saveAndRender();
-        }
-      });
-
-      linksContainer.appendChild(linkEl);
+      if (el) {
+        el.replaceWith(linkEl);
+      } else {
+        linksContainer.appendChild(linkEl);
+      }
+      wrappers[index] = linkEl;
     });
+
+    for (let i = quickLinks.length; i < wrappers.length; i++) {
+      wrappers[i].remove();
+    }
 
     if (quickLinks.length < 7) {
       const addBtnEl = document.createElement("div");
@@ -299,16 +349,6 @@ document.addEventListener("DOMContentLoaded", () => {
       addBtnEl.addEventListener("click", openModal);
       linksContainer.appendChild(addBtnEl);
     }
-
-    document.querySelectorAll(".delete-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const idx = parseInt(e.currentTarget.getAttribute("data-index"));
-        const deletedLink = quickLinks.splice(idx, 1)[0];
-        saveAndRender();
-        showUndoToast(deletedLink, idx);
-      });
-    });
 
     applyActionButtonsVisibility();
   }
@@ -370,7 +410,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("save-link-btn").addEventListener("click", () => {
-    let newName = nameInput.value.trim();
+    const newName = nameInput.value.trim();
     let newUrl = urlInput.value.trim();
 
     if (newName && newUrl) {
@@ -388,7 +428,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const editIndex = modal.getAttribute("data-edit-index");
       if (editIndex !== null) {
-        quickLinks[parseInt(editIndex)] = { name: newName, url: newUrl };
+        quickLinks[Number(editIndex)] = { name: newName, url: newUrl };
         modal.removeAttribute("data-edit-index");
       } else {
         quickLinks.push({ name: newName, url: newUrl });
@@ -410,7 +450,7 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
       searchInput.focus();
     }
-    const keyNum = parseInt(e.key);
+    const keyNum = Number(e.key);
     if (keyNum >= 1 && keyNum <= 7) {
       const linkIndex = keyNum - 1;
       if (quickLinks[linkIndex]) {
@@ -478,7 +518,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initSegments("theme-segments", "theme", "system", (val) => {
     if (val === "system") {
       localStorage.removeItem("theme");
-      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const isDark = darkMq && darkMq.matches;
       body.setAttribute("data-theme", isDark ? "dark" : "light");
     } else {
       body.setAttribute("data-theme", val);
@@ -486,7 +526,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   initSegments("engine-segments", "searchEngine", "google", (val) => {
-    const opt = document.querySelector(`.engine-option[data-value="${val}"]`);
+    const opt = engineOptionByValue.get(val);
     if (opt) updateEngineSettings(opt);
   });
 
